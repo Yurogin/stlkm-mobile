@@ -79,6 +79,7 @@ object Store {
 
     /** Ce que le téléphone a déjà, pour cette fiche. */
     private fun installee(c: Context, a: App): App {
+        // Le catalogue sait le nom de paquet ; sinon on l'a appris en installant ; sinon on devine.
         val paquet = a.paquet ?: paquetDe(a.id) ?: reconnait(c, a.nom) ?: return a
         return try {
             @Suppress("DEPRECATION")
@@ -106,23 +107,28 @@ object Store {
     }
 
     private fun cherche(): List<App> {
+        val cat = Catalogue.telecharge() ?: Catalogue.VIDE
         val depots = json("$API/users/$COMPTE/repos?per_page=100&sort=pushed&type=owner") as? JSONArray
             ?: return emptyList()
-        val retenus = ArrayList<JSONObject>()
+        val retenus = ArrayList<Pair<JSONObject, Fiche?>>()
         for (i in 0 until depots.length()) {
             val d = depots.optJSONObject(i) ?: continue
             if (d.optBoolean("fork") || d.optBoolean("archived") || d.optLong("size") == 0L) continue
+            val id = d.optString("name").lowercase()
+            if (id in cat.masques) continue
+            val f = cat.fiches[id]
+            if (f != null && !f.surMobile) continue   // une fiche rangée « PC seulement »
             val sujets = d.optJSONArray("topics")?.let { s -> List(s.length()) { s.optString(it) } } ?: emptyList()
             if (SANS_HUB in sujets) continue
-            // Le sujet dit « j'ai un APK » ; sinon on ne fouille que les dépôts récemment poussés,
-            // pour ne pas épuiser les 60 appels par heure que GitHub accorde.
-            if (SUJET in sujets || retenus.size < SCRUTES) retenus.add(d)
+            // Le catalogue et le sujet disent « j'ai un APK » ; sinon on ne fouille que les dépôts
+            // récemment poussés, pour ne pas épuiser les 60 appels par heure que GitHub accorde.
+            if (f?.apk != null || SUJET in sujets || retenus.size < SCRUTES) retenus.add(d to f)
         }
-        return retenus.mapNotNull { fiche(it) }
+        return retenus.mapNotNull { (depot, f) -> fiche(depot, f) }
     }
 
     /** La fiche d'un dépôt, ou rien si sa dernière release n'a pas d'APK. */
-    private fun fiche(depot: JSONObject): App? {
+    private fun fiche(depot: JSONObject, corrige: Fiche?): App? {
         val nom = depot.optString("name").ifBlank { return null }
         val releases = json("$API/repos/$COMPTE/$nom/releases?per_page=10") as? JSONArray ?: return null
         for (i in 0 until releases.length()) {
@@ -132,16 +138,21 @@ object Store {
             // Plusieurs APK possibles (téléphone et montre) : on prend celui qui n'est pas la montre.
             val apks = (0 until assets.length()).mapNotNull { assets.optJSONObject(it) }
                 .filter { it.optString("name").endsWith(".apk", true) }
-            val a = apks.firstOrNull { !it.optString("name").contains("montre", true) &&
-                                       !it.optString("name").contains("wear", true) } ?: apks.firstOrNull() ?: continue
+            // Le catalogue nomme l'APK à prendre ; sinon on écarte celui de la montre.
+            val a = corrige?.apk?.let { voulu -> apks.firstOrNull { it.optString("name").equals(voulu, true) } }
+                ?: apks.firstOrNull { !it.optString("name").contains("montre", true) &&
+                                      !it.optString("name").contains("wear", true) }
+                ?: apks.firstOrNull() ?: continue
             return App(
                 id = nom.lowercase(),
-                nom = nom,
-                resume = depot.optString("description").takeIf { it.isNotBlank() && it != "null" } ?: "",
+                nom = corrige?.nom ?: nom,
+                resume = corrige?.resume
+                    ?: depot.optString("description").takeIf { it.isNotBlank() && it != "null" } ?: "",
                 depot = "$COMPTE/$nom",
                 version = r.optString("tag_name").trimStart('v', 'V'),
                 apk = a.optString("browser_download_url"),
                 taille = a.optLong("size"),
+                paquet = corrige?.paquet,
             )
         }
         return null
@@ -168,14 +179,16 @@ object Store {
     private fun ecris(apps: List<App>) = JSONArray().apply {
         for (a in apps) put(JSONObject()
             .put("id", a.id).put("nom", a.nom).put("resume", a.resume).put("depot", a.depot)
-            .put("version", a.version).put("apk", a.apk).put("taille", a.taille))
+            .put("version", a.version).put("apk", a.apk).put("taille", a.taille)
+            .put("paquet", a.paquet ?: ""))
     }.toString()
 
     private fun lis(s: String): List<App> = try {
         val t = JSONArray(s)
         (0 until t.length()).mapNotNull { t.optJSONObject(it) }.map {
             App(it.optString("id"), it.optString("nom"), it.optString("resume"), it.optString("depot"),
-                it.optString("version"), it.optString("apk"), it.optLong("taille"))
+                it.optString("version"), it.optString("apk"), it.optLong("taille"),
+                it.optString("paquet").takeIf { p -> p.isNotBlank() })
         }
     } catch (e: Exception) {
         emptyList()
