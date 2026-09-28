@@ -72,7 +72,7 @@ object Store {
         if (!force && cache != null && age in 0..FRAIS) {
             return@withContext lis(cache).map { installee(c, it) }
         }
-        val apps = cherche()
+        val apps = cherche(force)
         if (apps.isNotEmpty()) {
             prefs.edit().putString("liste", ecris(apps)).putLong("vu", System.currentTimeMillis()).apply()
         }
@@ -108,8 +108,27 @@ object Store {
         return null
     }
 
-    private fun cherche(): List<App> {
+    /** La liste, en payant le moins d'appels possible à GitHub.
+     *
+     *  Le catalogue dit déjà quelles applis ont un APK : les interroger coûte une demande
+     *  chacune, là où fouiller les dépôts en coûte une par dépôt. On ne fouille donc que
+     *  sur demande — le bouton Actualiser — pour voir ce que le catalogue ignore encore. */
+    private fun cherche(force: Boolean): List<App> {
         val cat = Catalogue.telecharge() ?: Catalogue.VIDE
+
+        val connues = cat.fiches.values
+            .filter { it.surMobile && it.apk != null && it.depot != null && it.id !in cat.masques }
+            .mapNotNull { f -> depuisRelease(f.depot!!, f.nom ?: f.id, "", f) }
+        if (!force && connues.isNotEmpty()) return connues
+
+        val tout = LinkedHashMap<String, App>()
+        for (a in connues) tout[a.id] = a
+        for (a in decouvre(cat)) tout.putIfAbsent(a.id, a)
+        return tout.values.toList()
+    }
+
+    /** Ce que les dépôts racontent, pour les applis que le catalogue ne connaît pas encore. */
+    private fun decouvre(cat: Catalogue): List<App> {
         val depots = json("$API/users/$COMPTE/repos?per_page=100&sort=pushed&type=owner") as? JSONArray
             ?: return emptyList()
         val retenus = ArrayList<Pair<JSONObject, Fiche?>>()
@@ -120,24 +139,27 @@ object Store {
             if (id in cat.masques) continue
             val f = cat.fiches[id]
             if (f != null && !f.surMobile) continue   // une fiche rangée « PC seulement »
+            if (f?.apk != null) continue              // déjà servie par le catalogue
             val sujets = d.optJSONArray("topics")?.let { s -> List(s.length()) { s.optString(it) } } ?: emptyList()
             if (SANS_HUB in sujets) continue
-            // Le catalogue et le sujet disent « j'ai un APK » ; sinon on ne fouille que les dépôts
-            // récemment poussés, pour ne pas épuiser les 60 appels par heure que GitHub accorde.
-            if (f?.apk != null || SUJET in sujets || retenus.size < SCRUTES) retenus.add(d to f)
+            // Le sujet dit « j'ai un APK » ; sinon on ne regarde que les dépôts récemment
+            // poussés, pour ne pas épuiser les 60 appels par heure que GitHub accorde.
+            if (SUJET in sujets || retenus.size < SCRUTES) retenus.add(d to f)
         }
-        return retenus.mapNotNull { (depot, f) -> fiche(depot, f) }
+        return retenus.mapNotNull { (d, f) ->
+            val nom = d.optString("name").ifBlank { return@mapNotNull null }
+            val resume = d.optString("description").takeIf { it.isNotBlank() && it != "null" } ?: ""
+            depuisRelease("$COMPTE/$nom", nom, resume, f)
+        }
     }
 
-    /** La fiche d'un dépôt, ou rien si sa dernière release n'a pas d'APK. */
-    private fun fiche(depot: JSONObject, corrige: Fiche?): App? {
-        val nom = depot.optString("name").ifBlank { return null }
-        val releases = json("$API/repos/$COMPTE/$nom/releases?per_page=10") as? JSONArray ?: return null
+    /** L'appli que donne la dernière release d'un dépôt, ou rien s'il n'y a pas d'APK. */
+    private fun depuisRelease(depot: String, nom: String, resume: String, corrige: Fiche?): App? {
+        val releases = json("$API/repos/$depot/releases?per_page=10") as? JSONArray ?: return null
         for (i in 0 until releases.length()) {
             val r = releases.optJSONObject(i) ?: continue
             if (r.optBoolean("draft") || r.optBoolean("prerelease")) continue
             val assets = r.optJSONArray("assets") ?: continue
-            // Plusieurs APK possibles (téléphone et montre) : on prend celui qui n'est pas la montre.
             val apks = (0 until assets.length()).mapNotNull { assets.optJSONObject(it) }
                 .filter { it.optString("name").endsWith(".apk", true) }
             // Le catalogue nomme l'APK à prendre ; sinon on écarte celui de la montre.
@@ -146,11 +168,10 @@ object Store {
                                       !it.optString("name").contains("wear", true) }
                 ?: apks.firstOrNull() ?: continue
             return App(
-                id = nom.lowercase(),
+                id = depot.substringAfterLast("/").lowercase(),
                 nom = corrige?.nom ?: nom,
-                resume = corrige?.resume
-                    ?: depot.optString("description").takeIf { it.isNotBlank() && it != "null" } ?: "",
-                depot = "$COMPTE/$nom",
+                resume = corrige?.resume ?: resume,
+                depot = depot,
                 version = r.optString("tag_name").trimStart('v', 'V'),
                 apk = a.optString("browser_download_url"),
                 taille = a.optLong("size"),

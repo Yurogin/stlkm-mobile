@@ -16,6 +16,7 @@ data class Fiche(
     val nom: String? = null,
     val resume: String? = null,
     val plateformes: List<String> = emptyList(),
+    val depot: String? = null,     // « proprietaire/depot », d'où viennent les releases
     val apk: String? = null,       // le nom de l'asset à prendre dans la release
     val paquet: String? = null,    // ce qui s'installe, pour reconnaître l'appli
 ) {
@@ -81,7 +82,10 @@ data class Catalogue(val fiches: Map<String, Fiche>, val masques: Set<String>) {
                     "name" -> f.copy(nom = texte(valeur))
                     "summary" -> f.copy(resume = texte(valeur))
                     "platforms" -> f.copy(plateformes = liste(valeur))
-                    "source" -> f.copy(apk = dansTable(valeur, "asset", "android"))
+                    "source" -> f.copy(
+                        depot = valeurDe(valeur, "repo"),
+                        apk = dansTable(valeur, "asset", "android"),
+                    )
                     "launch" -> f.copy(paquet = dansTable(valeur, "exec", "android"))
                     else -> f
                 }
@@ -106,6 +110,20 @@ data class Catalogue(val fiches: Map<String, Fiche>, val masques: Set<String>) {
         private fun liste(v: String) =
             v.trim().removePrefix("[").removeSuffix("]")
                 .split(",").map { texte(it) }.filter { it.isNotEmpty() }
+
+        /** `{ kind = "…", repo = "moi/x", … }` → "moi/x". */
+        private fun valeurDe(table: String, cle: String): String? {
+            // L'accolade extérieure sort d'abord, sinon la règle suivante avalerait toute la table.
+            val dedans = table.trim().removePrefix("{").removeSuffix("}")
+            val sansTables = dedans.replace(Regex("""\{[^{}]*}"""), "")   // les tables imbriquées
+            for (morceau in sansTables.split(",")) {
+                if (morceau.substringBefore("=").trim().trim('{') == cle) {
+                    // L'accolade d'abord, les guillemets ensuite : « "moi/x" }» sinon en garde un.
+                    return texte(morceau.substringAfter("=", "").trim().trimEnd('}').trim())
+                }
+            }
+            return null
+        }
 
         /** `{ kind = "…", asset = { windows = "a", android = "b" } }` → "b". */
         private fun dansTable(valeur: String, table: String, cle: String): String? {
