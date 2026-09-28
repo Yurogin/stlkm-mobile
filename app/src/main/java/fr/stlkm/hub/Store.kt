@@ -14,6 +14,8 @@ import java.net.URL
 // compte, et tout dépôt dont la dernière release contient un .apk est installable.
 
 const val COMPTE = "Yurogin"
+/** Le dépôt d'où vient ce hub : il se reconnaît dans sa propre liste, catalogue ou pas. */
+const val MOI = "stlkm-mobile"
 private const val API = "https://api.github.com"
 private const val SUJET = "stlkm-android"   // sujet GitHub : évite d'aller voir les releases pour rien
 private const val SANS_HUB = "stlkm-ignore" // le même que sur PC

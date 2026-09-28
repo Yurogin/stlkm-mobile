@@ -63,6 +63,22 @@ private fun Hub() {
         }
     }
 
+    /** Télécharge puis tend l'APK à l'installateur : c'est lui qui demande confirmation. */
+    fun installe(a: App) {
+        if (enCours != null) return
+        scope.launch {
+            enCours = a.id
+            avance = 0f
+            val f = Install.telecharge(c, a) { avance = it }
+            enCours = null
+            if (f == null) erreur = "Téléchargement impossible : vérifie le réseau."
+            else {
+                Install.paquetDe(c, f)?.let { Store.retientPaquet(a.id, it) }
+                Install.ouvreInstallateur(c, f)
+            }
+        }
+    }
+
     LaunchedEffect(Unit) { rafraichis(false) }
 
     // Au retour de l'installateur, les versions installées ont pu changer.
@@ -73,12 +89,24 @@ private fun Hub() {
         onDispose { owner.lifecycle.removeObserver(o) }
     }
 
+    // Le hub n'est pas une appli comme les autres dans sa propre liste : sa mise à jour
+    // se range en haut, à côté d'Actualiser, plutôt qu'au milieu de ce qu'il propose.
+    val estMoi = { a: App -> a.paquet == c.packageName || a.id == MOI }
+    val moiMeme = apps.firstOrNull(estMoi)
+    val autres = apps.filterNot(estMoi)
+
     Column(Modifier.fillMaxSize().background(Fond).safeDrawingPadding().padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("STLKM", color = Orange, fontSize = 32.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+            if (moiMeme != null && plusRecent(moiMeme.version, BuildConfig.VERSION_NAME)) {
+                Bouton(
+                    if (enCours == moiMeme.id) "…" else "Mettre à jour " + moiMeme.version,
+                    Orange, Encre, Modifier.padding(end = 8.dp),
+                ) { installe(moiMeme) }
+            }
             Bouton(if (charge) "…" else "Actualiser", Carte, Texte) { rafraichis(true) }
         }
-        Text("Les applis du compte $COMPTE qui s'installent sur téléphone.",
+        Text("Les applis du compte $COMPTE qui s'installent sur téléphone. · Hub " + BuildConfig.VERSION_NAME,
             color = Gris, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
 
         if (!Install.autorise(c)) {
@@ -92,7 +120,7 @@ private fun Hub() {
         if (erreur.isNotEmpty()) Text(erreur, color = Gris, fontSize = 14.sp)
 
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(apps, key = { it.id }) { a ->
+            items(autres, key = { it.id }) { a ->
                 Colonne {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -112,21 +140,8 @@ private fun Hub() {
                         }
                         val vif = a.installee == null || a.aMettreAJour
                         Bouton(libelle, if (vif) Orange else Carte, if (vif) Encre else Texte) {
-                            if (a.installee != null && !a.aMettreAJour) {
-                                a.paquet?.let { Install.lance(c, it) }
-                            } else if (enCours == null) {
-                                scope.launch {
-                                    enCours = a.id
-                                    avance = 0f
-                                    val f = Install.telecharge(c, a) { avance = it }
-                                    enCours = null
-                                    if (f == null) erreur = "Téléchargement impossible : vérifie le réseau."
-                                    else {
-                                        Install.paquetDe(c, f)?.let { Store.retientPaquet(a.id, it) }
-                                        Install.ouvreInstallateur(c, f)
-                                    }
-                                }
-                            }
+                            if (a.installee != null && !a.aMettreAJour) a.paquet?.let { Install.lance(c, it) }
+                            else installe(a)
                         }
                     }
                     if (a.resume.isNotEmpty()) {
