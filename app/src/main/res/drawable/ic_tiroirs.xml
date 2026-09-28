@@ -1,0 +1,8 @@
+<!-- Deux tiroirs, comme l'icône du hub PC. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FF8A29" android:pathData="M28,30h52a4,4 0,0 1,4 4v16a4,4 0,0 1,-4 4h-52a4,4 0,0 1,-4 -4v-16a4,4 0,0 1,4 -4z" />
+    <path android:fillColor="#FF8A29" android:pathData="M28,60h52a4,4 0,0 1,4 4v16a4,4 0,0 1,-4 4h-52a4,4 0,0 1,-4 -4v-16a4,4 0,0 1,4 -4z" />
+    <path android:fillColor="#15171C" android:pathData="M48,40h12v4h-12z" />
+    <path android:fillColor="#15171C" android:pathData="M48,70h12v4h-12z" />
+</vector>

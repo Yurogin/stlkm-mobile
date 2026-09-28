@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Stlkm" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#15171C</item>
+        <item name="android:navigationBarColor">#00000000</item>
+    </style>
+</resources>
